@@ -4,7 +4,7 @@
 CPU_LOW_TEMP=40        # Low temperature threshold for CPU
 CPU_HIGH_TEMP=80       # High temperature threshold for CPU
 DRIVE_LOW_TEMP=25      # Low temperature threshold for Drives
-DRIVE_HIGH_TEMP=45     # Low temperature threshold for Drives
+DRIVE_HIGH_TEMP=45     # High temperature threshold for Drives
 NVME_LOW_TEMP=35       # Low temperature threshold for NVMe
 NVME_HIGH_TEMP=60      # High temperature threshold for NVMe
 MIN_PWM=70             # Minimum PWM value
@@ -61,14 +61,14 @@ calculate_pwm() {
         log)
             local range_temp=$((high_temp - low_temp))
             local temp_offset=$((temp - low_temp + 1))
-            local pwm_value=$(awk -v min=$MIN_PWM -v max=$MAX_PWM -v temp=$temp_offset -v range=$range_temp 'BEGIN { print min + (max - min) * log(temp) / log(range + 1) }')
-            echo ${pwm_value%.*}
+            local pwm_value=$(awk -v min=$MIN_PWM -v max=$MAX_PWM -v temp=$temp_offset -v range=$range_temp 'BEGIN { val = min + (max - min) * log(temp) / log(range + 1); if (val < min) val = min; if (val > max) val = max; printf "%.0f\n", val }')
+            echo "$pwm_value"
             ;;
         exp)
             local range_temp=$((high_temp - low_temp))
             local temp_offset=$((temp - low_temp))
-            local pwm_value=$(awk -v min=$MIN_PWM -v max=$MAX_PWM -v temp=$temp_offset -v range=$range_temp 'BEGIN { print min + (max - min) * ((exp(temp / range) - 1) / (exp(1) - 1)) }')
-            echo ${pwm_value%.*}
+            local pwm_value=$(awk -v min=$MIN_PWM -v max=$MAX_PWM -v temp=$temp_offset -v range=$range_temp 'BEGIN { val = min + (max - min) * ((exp(temp / range) - 1) / (exp(1) - 1)); if (val < min) val = min; if (val > max) val = max; printf "%.0f\n", val }')
+            echo "$pwm_value"
             ;;
         *)
             log_error "Unknown PWM calculation method: $PWM_METHOD"
@@ -131,19 +131,39 @@ log "PWM calculation method: $PWM_METHOD"
 # Check and load the it87 module if necessary
 check_and_load_module
 
-# Get the fan speed and fan RPM directories
-fanSpeedDir=$(echo /sys/class/hwmon/$(ls -l /sys/class/hwmon | grep it87 | awk '{print $9}')/pwm2)
-fanRpmDir=$(echo /sys/class/hwmon/$(ls -l /sys/class/hwmon | grep it87 | awk '{print $9}')/fan2_input)
-# Get the CPU temperature directory
-cpuTempDir=$(echo /sys/class/hwmon/$(ls -l /sys/class/hwmon | grep coretemp | awk '{print $9}')/temp1_input)
+# Get hwmon base directories
+it87Dir=$(get_hwmon_dir "it87")
+coretempDir=$(get_hwmon_dir "coretemp")
 
-# Function to dynamically find hwmon entries for drivetemp and nvme
+if [ -z "$it87Dir" ] || [ -z "$coretempDir" ]; then
+    log_error "Error: it87 or coretemp hwmon directory not found."
+    exit 1
+fi
+
+# Derive individual sysfs paths
+fanSpeedDir="$it87Dir/pwm2"
+fanRpmDir="$it87Dir/fan2_input"
+fanEnableDir="$it87Dir/pwm2_enable"
+cpuTempDir="$coretempDir/temp1_input"
+
+# Function to find a single hwmon directory by driver name
+get_hwmon_dir() {
+    local type=$1
+    for dir in /sys/class/hwmon/*/; do
+        if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
+            echo "${dir%/}"
+            return
+        fi
+    done
+}
+
+# Function to dynamically find all hwmon directories matching a driver name
 get_hwmon_dirs() {
     local type=$1
     local dirs=()
-    for dir in /sys/class/hwmon/*; do
-        if grep -q "$type" "$dir/name"; then
-            dirs+=("$dir")
+    for dir in /sys/class/hwmon/*/; do
+        if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
+            dirs+=("${dir%/}")
         fi
     done
     echo "${dirs[@]}"
@@ -154,10 +174,22 @@ driveTempDirs=($(get_hwmon_dirs "drivetemp"))
 nvmeTempDirs=($(get_hwmon_dirs "nvme"))
 
 # Check if fan speed, fan RPM, and CPU temperature directories exist
-if [ ! -e "$fanSpeedDir" ] || [ ! -e "$fanRpmDir" ] || [ ! -e "$cpuTempDir" ]; then
-    log_error "Error: fan speed, fan RPM, or CPU temperature directory not found."
+if [ ! -e "$fanSpeedDir" ] || [ ! -e "$fanRpmDir" ] || [ ! -e "$cpuTempDir" ] || [ ! -e "$fanEnableDir" ]; then
+    log_error "Error: fan speed, fan RPM, CPU temperature, or PWM enable directory not found."
     exit 1
 fi
+
+# Save original PWM mode and restore it on exit
+originalPwmEnable=$(<"$fanEnableDir")
+cleanup() {
+    log "Restoring original fan control mode ($originalPwmEnable)."
+    echo "$originalPwmEnable" > "$fanEnableDir" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+# Enable manual PWM control
+echo 1 > "$fanEnableDir"
+log "PWM set to manual mode."
 
 # Infinite loop to monitor and control fan speed based on the highest temperature
 while true; do
@@ -165,7 +197,7 @@ while true; do
     fanSpeed=$(<"$fanSpeedDir")
     fanRpm=$(<"$fanRpmDir")
     cpuTemp=$(<"$cpuTempDir")
-    cpuTemp=${cpuTemp:0:2}  # Extract the first two digits of the temperature
+    cpuTemp=$((cpuTemp / 1000))  # Convert from millidegrees to degrees Celsius
 
     # Check for broken fan
     if [ "$fanSpeed" -ne 0 ] && [ "$fanRpm" -eq 0 ]; then
@@ -186,7 +218,7 @@ while true; do
     maxDrive=0
     for dir in "${driveTempDirs[@]}"; do
         driveTemp=$(<"$dir/temp1_input")
-        driveTemp=${driveTemp:0:2}  # Extract the first two digits of the temperature
+        driveTemp=$((driveTemp / 1000))  # Convert from millidegrees to degrees Celsius
         if [ "$driveTemp" -gt "$maxDrive" ]; then
             maxDrive=$driveTemp
         fi
@@ -202,7 +234,7 @@ while true; do
     maxNVMe=0
     for dir in "${nvmeTempDirs[@]}"; do
         nvmeTemp=$(<"$dir/temp1_input")
-        nvmeTemp=${nvmeTemp:0:2}  # Extract the first two digits of the temperature
+        nvmeTemp=$((nvmeTemp / 1000))  # Convert from millidegrees to degrees Celsius
         if [ "$nvmeTemp" -gt "$maxNVMe" ]; then
             maxNVMe=$nvmeTemp
         fi
