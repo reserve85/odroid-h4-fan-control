@@ -7,8 +7,8 @@ DRIVE_LOW_TEMP=25      # Low temperature threshold for Drives
 DRIVE_HIGH_TEMP=45     # High temperature threshold for Drives
 NVME_LOW_TEMP=35       # Low temperature threshold for NVMe
 NVME_HIGH_TEMP=60      # High temperature threshold for NVMe
-MIN_PWM=70             # Minimum PWM value
-MAX_PWM=255            # Maximum PWM value
+MIN_PWM=30             # Minimum PWM value
+MAX_PWM=128            # Maximum PWM value (255 = full speed)
 OVERHEAT_THRESHOLD=10  # Temperature threshold above high temp for overheating protection
 
 # Command line controlled variables
@@ -16,6 +16,41 @@ SLEEP_DURATION=5       # Default sleep duration between checks
 OVERHEAT_PROTECTION=false  # Enable or disable overheating protection
 VERBOSE=false          # Verbose flag
 PWM_METHOD="lin"       # Default PWM calculation method
+
+# Function to find a single hwmon directory by driver name
+get_hwmon_dir() {
+    local type=$1
+    for dir in /sys/class/hwmon/*/; do
+        if [ -f "${dir}name" ]; then
+            name=$(cat "${dir}name")
+            echo "$name" | grep -Eqi "$type|it86|it87|it8613" && {
+                echo "${dir%/}"
+                return
+            }
+        fi
+    done
+}
+# get_hwmon_dir() {
+#     local type=$1
+#     for dir in /sys/class/hwmon/*/; do
+#         if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
+#             echo "${dir%/}"
+#             return
+#         fi
+#     done
+# }
+
+# Function to dynamically find all hwmon directories matching a driver name
+get_hwmon_dirs() {
+    local type=$1
+    local dirs=()
+    for dir in /sys/class/hwmon/*/; do
+        if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
+            dirs+=("${dir%/}")
+        fi
+    done
+    echo "${dirs[@]}"
+}
 
 # Function to print messages based on verbose flag
 log() {
@@ -77,11 +112,11 @@ calculate_pwm() {
     esac
 }
 
-# Function to check if the it87 module is loaded, and load it if necessary
 check_and_load_module() {
-    if ! lsmod | grep -q it87; then
+    if ! lsmod | awk '{print $1}' | grep -qx it87; then
         log "it87 module is not loaded. Attempting to load it..."
-        if sudo modprobe -a it87; then
+
+        if sudo modprobe it87; then
             log "it87 module loaded successfully."
         else
             log_error "Failed to load it87 module. Exiting."
@@ -128,11 +163,11 @@ log "PWM calculation method: $PWM_METHOD"
 # Check if the script is run as root, otherwise re-run with sudo
 [ "$EUID" -eq 0 ] || exec sudo "$0" "$@"
 
-# Check and load the it87 module if necessary
+# Check and load the it86 module if necessary
 check_and_load_module
 
 # Get hwmon base directories
-it87Dir=$(get_hwmon_dir "it87")
+it87Dir=$(get_hwmon_dir "it86|it87|it8613")
 coretempDir=$(get_hwmon_dir "coretemp")
 
 if [ -z "$it87Dir" ] || [ -z "$coretempDir" ]; then
@@ -145,29 +180,6 @@ fanSpeedDir="$it87Dir/pwm2"
 fanRpmDir="$it87Dir/fan2_input"
 fanEnableDir="$it87Dir/pwm2_enable"
 cpuTempDir="$coretempDir/temp1_input"
-
-# Function to find a single hwmon directory by driver name
-get_hwmon_dir() {
-    local type=$1
-    for dir in /sys/class/hwmon/*/; do
-        if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
-            echo "${dir%/}"
-            return
-        fi
-    done
-}
-
-# Function to dynamically find all hwmon directories matching a driver name
-get_hwmon_dirs() {
-    local type=$1
-    local dirs=()
-    for dir in /sys/class/hwmon/*/; do
-        if [ -f "${dir}name" ] && grep -q "^${type}$" "${dir}name" 2>/dev/null; then
-            dirs+=("${dir%/}")
-        fi
-    done
-    echo "${dirs[@]}"
-}
 
 # Get drivetemp and nvme directories
 driveTempDirs=($(get_hwmon_dirs "drivetemp"))
