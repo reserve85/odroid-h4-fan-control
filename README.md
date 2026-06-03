@@ -28,7 +28,7 @@ This repository contains a script to control the fan of an ODROID H4. The script
 
 2. **Clone this repository:**
    ```bash
-   git clone https://github.com/Troglobitten/odroid-h4-fan-control.git
+   git clone https://github.com/reserve85/odroid-h4-fan-control.git
    cd odroid-h4-fan-control
    ```
 
