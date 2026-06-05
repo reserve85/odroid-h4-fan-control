@@ -1,23 +1,26 @@
 # ODROID H4 Fan Control Script
 
-This repository contains a script to control the fan of an ODROID H4. The script adjusts the fan speed based on temperature readings, using the `it87` module.
+This repository contains a script to control the fan of an **ODROID H4**. The script adjusts fan speed based on temperature readings and is a Python port of an original shell script.
 
 ## Features
 
-- Adjusts fan speed based on CPU, Drive, and NVMe temperatures.
-- Supports linear, logarithmic, and exponential fan curves.
-- Overheat protection with automatic shutdown.
-- Configurable sleep duration between temperature checks.
+- Adjusts fan speed based on **CPU**, **Drive**, and **NVMe** temperatures.  
+- Supports **linear**, **logarithmic**, and **exponential** fan curves.  
+- Overheat protection with automatic shutdown.  
+- Configurable sleep duration between temperature checks.  
 - Verbose logging for troubleshooting.
 
 ## Requirements
 
-- ODROID H4 with fan set to software mode in the BIOS.
-- `it87` module installed (https://github.com/frankcrawford/it87).
+- **ODROID H4** with the fan set to **software mode** in the BIOS.  
+- **Python 3** (interpreter `python3`).  
+- Optional: the `it87` kernel module if your hardware requires it.
+
+> **Note:** Some ODROID H4 setups use the Hardkernel EC instead of `it87`. If your board uses the EC, you may need to adapt the script to read/write the EC sysfs paths instead of `it87`.
 
 ## Installation
 
-1. **Download and build the `it87` module:**
+1. **(Optional) Build and install the `it87` module** — only if your hardware requires it:
    ```bash
    git clone https://github.com/frankcrawford/it87.git
    cd it87
@@ -32,31 +35,40 @@ This repository contains a script to control the fan of an ODROID H4. The script
    cd odroid-h4-fan-control
    ```
 
-3. **Make the script executable:**
+3. **Make the Python script executable:**
    ```bash
-   chmod +x fan_control.sh
+   chmod +x fan_control.py
    ```
 
-4. **Create a systemd service to run the script at boot:**
+4. **Ensure Python 3 is installed:**
+   ```bash
+   python3 --version
+   # If not installed:
+   sudo apt update
+   sudo apt install python3
+   ```
 
-   Create the service file:
-   ```ini name=/etc/systemd/system/fan_control.service
+5. **Create a systemd service to run the script at boot**
+
+   Create `/etc/systemd/system/fan_control.service` with the following content (adjust the path and user if needed):
+
+   ```ini
    [Unit]
-   Description=Fan Control Service
-   After=network.target
+   Description=Odroid H4 Fan Control (Python)
+   After=multi-user.target
 
    [Service]
-   ExecStart=/usr/bin/ionice -c2 -n7 /usr/bin/nice -n19 /path/to/fan_control.sh -t 3 -o -c lin
+   Type=simple
+   ExecStart=/usr/bin/python3 /home/reserve/odroid-h4-fan-control/fan_control.py -t 3 -o -c lin -v
    Restart=always
-   User=USERNAME
+   RestartSec=2
+   User=root
 
    [Install]
    WantedBy=multi-user.target
    ```
 
-   Replace `/path/to/fan_control.sh` with the actual path to the script.
-
-5. **Reload systemd and enable the service:**
+6. **Reload systemd and enable the service:**
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable fan_control.service
@@ -65,37 +77,48 @@ This repository contains a script to control the fan of an ODROID H4. The script
 
 ## Usage
 
-### Command Line Options
+### Command line options
 
-- `-v` : Enable verbose mode.
-- `-t sleep_duration` : Set the sleep duration between checks (default: 5 seconds).
-- `-o` : Enable overheating protection.
-- `-c pwm_method` : Set the fan curve to linear (`lin`), logarithmic (`log`), or exponential (`exp`). Default is linear (`lin`).
+- `-v` : Enable verbose mode (detailed logging).  
+- `-t <seconds>` : Set the sleep duration between checks (default: 5 seconds).  
+- `-o` : Enable overheating protection (system will shut down if thresholds are exceeded).  
+- `-c <lin|log|exp>` : Set the fan curve to linear (`lin`), logarithmic (`log`), or exponential (`exp`). Default is `lin`.
 
-### Example
+### Examples
 
-To run the script manually with a sleep duration of 3 seconds, overheating protection enabled, and a linear fan curve:
+Run the script manually with a 3 second interval, overheat protection enabled, linear curve, and verbose logging:
+
 ```bash
-sudo ionice -c2 -n7 nice -n19 ./fan_control.sh -t 3 -o -c lin
+sudo python3 ./fan_control.py -t 3 -o -c lin -v
 ```
 
-## Explanation of Options
+Start the systemd service (as configured above):
 
-- **Verbose Mode (`-v`)**:
-  Enables detailed logging for troubleshooting purposes. Useful for understanding the script’s behavior and diagnosing issues.
+```bash
+sudo systemctl start fan_control.service
+```
 
-- **Sleep Duration (`-t`)**:
-  Specifies the interval (in seconds) between temperature checks. A shorter duration makes the script more responsive to temperature changes but may increase CPU usage.
+View logs:
 
-- **Overheating Protection (`-o`)**:
-  When enabled, the script will shut down the system if temperatures exceed the defined thresholds by a specified margin. This feature helps prevent hardware damage due to overheating.
+```bash
+journalctl -fu fan_control.service
+```
 
-- **PWM Method (`-c`)**:
-  Defines how the fan speed is calculated based on temperature:
-  - `lin`: Linear relationship between temperature and fan speed.
-  - `log`: Logarithmic relationship, providing finer control at lower temperatures.
-  - `exp`: Exponential relationship, providing more aggressive cooling as temperature rises.
+## Explanation of options
+
+- **Verbose (`-v`)**: Enables detailed output for troubleshooting.  
+- **Sleep duration (`-t`)**: Interval in seconds between temperature checks. Shorter intervals react faster but increase the frequency of reads.  
+- **Overheat protection (`-o`)**: When enabled, the script will shut down the system if temperatures exceed configured thresholds by a safety margin.  
+- **PWM method (`-c`)**: Determines how PWM is calculated from temperature:
+  - `lin`: Linear mapping between temperature and PWM.  
+  - `log`: Logarithmic mapping for finer control at lower temperatures.  
+  - `exp`: Exponential mapping for more aggressive cooling as temperature rises.
+
+## Notes
+
+- The script reads temperatures from hwmon sysfs entries and writes PWM values to the appropriate `pwm` sysfs node. If your board exposes different sysfs paths (for example, Hardkernel EC paths), update the script accordingly.  
+- The repository includes a systemd unit example that starts the script with `-t 3 -o -c lin -v`. Adjust the ExecStart line if you prefer different defaults.
 
 ## Credits
 
-This script is based on code from the ODROID wiki: [Fan Speed Control with Temperature](https://wiki.odroid.com/odroid-h4/application_note/fan_speed_control_with_temp). and made hastily on a rainy saturday afternoon using github copilot. YMMV
+Based on the ODROID wiki article *Fan Speed Control with Temperature* and the original shell script. Ported to Python and adapted locally. YMMV.
