@@ -1,9 +1,8 @@
-### README
-
-```markdown
 # ODROID H4 Fan Control
 
 A Python script to control the fan on an **ODROID H4**. The script adjusts fan speed based on temperature readings and provides robust detection, configurable curves, and optional overheat protection.
+
+---
 
 ## Features
 
@@ -14,6 +13,8 @@ A Python script to control the fan on an **ODROID H4**. The script adjusts fan s
 - **Verbose logging** for troubleshooting.  
 - Automatic detection of the appropriate `hwmon`/`pwm` sysfs node (prefers `it8613`/`it87`).
 
+---
+
 ## Requirements
 
 - **ODROID H4** with the fan set to **software mode** in BIOS.  
@@ -21,7 +22,9 @@ A Python script to control the fan on an **ODROID H4**. The script adjusts fan s
 - Optional: kernel module **it87** if your hardware requires it.  
 - Optional: **nvme-cli** if you want NVMe temperature readings via NVMe SMART.
 
-> Note: Some ODROID H4 boards use the Hardkernel EC instead of `it87`. If your board uses the EC, you may need to adapt sysfs paths in the script.
+> **Note:** Some ODROID H4 boards use the Hardkernel EC instead of `it87`. If your board uses the EC, you may need to adapt sysfs paths in the script.
+
+---
 
 ## Installation
 
@@ -57,9 +60,11 @@ A Python script to control the fan on an **ODROID H4**. The script adjusts fan s
    sudo apt install nvme-cli
    ```
 
+---
+
 ## Systemd Service Example
 
-Create `/etc/systemd/system/fancontrol.service` with the following content. This example uses the recommended defaults you provided:
+Create `/etc/systemd/system/fancontrol.service` with the following content. This example uses the recommended defaults:
 
 ```ini
 [Unit]
@@ -90,16 +95,20 @@ sudo systemctl start fancontrol.service
 sudo journalctl -u fancontrol.service -f -o short-iso-precise
 ```
 
+---
+
 ## Command Line Options
 
 - `-v`, `--verbose` : Enable verbose logging.  
 - `-t`, `--sleep <seconds>` : Sleep interval between checks (default **2**).  
 - `-o`, `--overheat` : Enable overheat protection (shutdown when threshold reached).  
-- `--overheat-threshold <°C>` : Overheat shutdown threshold (example `10` or `95`).  
+- `--overheat-threshold <°C>` : Overheat shutdown threshold.  
 - `-c`, `--curve <lin|log|exp>` : PWM curve type (default `lin`).  
 - `--pwm-min <value>` : Minimum PWM value (example `30`).  
 - `--pwm-max <value>` : Maximum PWM value (example `128`).  
 - `--tmin <°C>` / `--tmax <°C>` : Temperature range for the curve (default `30`/`80`).
+
+---
 
 ## Examples
 
@@ -121,6 +130,8 @@ View logs:
 sudo journalctl -u fancontrol.service -f -o short-iso-precise
 ```
 
+---
+
 ## Behavior Notes
 
 - The script prefers **coretemp**/hwmon CPU sensors (Package/Core) over ACPI thermal zones to avoid using chassis/ACPI temperatures.  
@@ -128,9 +139,13 @@ sudo journalctl -u fancontrol.service -f -o short-iso-precise
 - The script writes PWM values to the detected `pwm` sysfs node. If your board exposes different sysfs paths (for example Hardkernel EC), update the script accordingly.  
 - Default sleep interval is **2 seconds**. If you set a shorter interval, be mindful of increased sysfs reads and log volume.
 
+---
+
 ## Customization
 
 - To use separate temperature ranges per sensor (CPU, Drive, NVMe) or a different aggregation strategy, the script can be extended with per-sensor CLI flags and a custom `compute_pwm` strategy. If you want that, I can provide a patch.
+
+---
 
 ## Troubleshooting
 
@@ -141,11 +156,8 @@ sudo journalctl -u fancontrol.service -f -o short-iso-precise
   and update the script to point to the correct `pwm` node if necessary.  
 - If CPU temperature reads low (e.g., ACPI instead of coretemp), ensure `coretemp` is available and the script is preferring the `coretemp` hwmon entry.
 
+---
+
 ## Credits
 
 Based on the ODROID wiki article *Fan Speed Control with Temperature* and the original shell script. Ported to Python and adapted locally. YMMV.
-```
-
-If you want, I can:
-- Add a short **Quick Start** section with the exact commands you ran earlier, or  
-- Produce a small patch that adds per-sensor temperature ranges and a `--overheat-threshold` CLI flag to the script. Which would you prefer next?
