@@ -1,74 +1,119 @@
 # ODROID H4 Fan Control
 
-A Python script to control the fan on an **ODROID H4**. The script adjusts fan speed based on temperature readings and provides robust detection, configurable curves, and optional overheat protection.
+A Python script that controls the fan on an **ODROID H4**. It reads CPU, drive, and NVMe
+temperatures, maps the hottest reading through a configurable fan curve, and writes the
+result to the fan controller's PWM sysfs node — with fail-safe behavior, optional
+overheat shutdown, and bounded journal logging.
 
 ---
 
 ## Features
 
-- Controls fan speed using **CPU**, **Drive** (best-effort, requires `smartctl`), and **NVMe** temperatures.  
-- Supports **linear**, **logarithmic**, and **exponential** fan curves.  
-- Optional **overheat protection** with automatic shutdown at a configurable threshold (default **95 °C**).  
-- **Fail-safe:** if *all* temperature sensors are unavailable, the fan runs at **maximum** speed instead of turning off.  
-- **Hysteresis:** the PWM value is only rewritten when it changes by more than `--pwm-hysteresis` (default **2**), reducing sysfs churn.  
-- **Configurable sleep interval** between checks (default **2 seconds**).  
-- **Verbose logging** for troubleshooting, with rate-limited status lines.  
-- Automatic detection of the appropriate `hwmon`/`pwm` sysfs node (prefers `it8613`/`it87`).  
-- **Import-safe & testable:** no side effects at import time; full `pytest` suite included.
+- Controls fan speed from **CPU**, **Drive** (best-effort, needs `smartctl`), and **NVMe**
+  temperatures — always uses the **hottest** available reading.
+- Three fan curves: **linear**, **logarithmic**, **exponential** (`-c lin|log|exp`).
+- **Fail-safe:** if *all* sensors are unavailable, the fan runs at **maximum** speed —
+  never off — and one `ERROR` is logged on entering that state.
+- **Manual mode at startup:** the script sets `pwmN_enable = 1` when the node exists, so
+  PWM writes actually take effect instead of being ignored by automatic/thermal control.
+- **Overheat protection** (opt-in via `-o`): shuts down at `--overheat-threshold`
+  (default **95 °C**, exact comparison, no hidden margin). If the shutdown command
+  fails, the script **keeps running** (fan held at max) and retries every cycle.
+- **Hysteresis:** PWM is only rewritten when it changes by more than `--pwm-hysteresis`
+  (default **2**), reducing sysfs churn.
+- **Bounded logging:** a status line on every PWM/fail-safe state change, plus a
+  **30-second heartbeat** while quiet — no per-iteration log spam.
+- **Robust sensor probing:** absent or hung sources/devices are cached for **60 s** and
+  re-probed afterwards (a dead NVMe or SATA drive can't stall the loop forever).
+- Auto-detects the PWM sysfs node (prefers `it8613`/`it87`, re-resolves if it vanishes).
+- **Import-safe & testable:** no side effects at import time; **103** pytest cases, all
+  hardware I/O mocked; CI runs on every push.
 
 ---
 
 ## Requirements
 
-- **ODROID H4** with the fan set to **software mode** in BIOS.  
-- **Python 3** (`python3`) installed (3.8+).  
-- Optional: kernel module **it87** if your hardware requires it.  
-- Optional: **nvme-cli** if you want NVMe temperature readings via NVMe SMART.  
-- Optional: **smartmontools** (`smartctl`) for SATA drive temperature readings.
+- **ODROID H4** with the fan set to **software mode** in the BIOS.
+- **Python 3.8+** (`python3`).
+- **root** for writing `/sys/class/hwmon` (the systemd unit runs as root; manual runs
+  need `sudo`).
+- Optional kernel module **it87** if your board needs it (see step 1).
+- Optional **nvme-cli** for NVMe temperatures via NVMe SMART.
+- Optional **smartmontools** (`smartctl`) for SATA drive temperatures.
 
-> **Note:** Some ODROID H4 boards use the Hardkernel EC instead of `it87`. If your board uses the EC, you may need to adapt sysfs paths in the script.
+> **Note:** Some ODROID H4 boards use the Hardkernel EC instead of `it87`. The script
+> auto-detects the PWM node and its `*_enable` file; if your board exposes different
+> sysfs paths, see [Troubleshooting](#troubleshooting).
 
 ---
 
 ## Installation
 
-1. Optional build and install `it87` if required:
-   ```bash
-   git clone https://github.com/frankcrawford/it87.git
-   cd it87
-   make
-   sudo make install
-   sudo modprobe it87
-   ```
+### Step 1 — Optional: hardware support tools
 
-2. Clone this repository:
-   ```bash
-   git clone https://github.com/reserve85/odroid-h4-fan-control.git
-   cd odroid-h4-fan-control
-   ```
+Only needed if you want NVMe / drive temperatures, or if your board requires the `it87`
+module:
 
-3. Make the script executable (script name **fan_control.py**):
-   ```bash
-   chmod +x fan_control.py
-   ```
+```bash
+# NVMe + SATA drive temperatures
+sudo apt update
+sudo apt install nvme-cli smartmontools
 
-4. Ensure Python 3 is installed:
-   ```bash
-   python3 --version
-   sudo apt update
-   sudo apt install python3
-   ```
+# it87 kernel module (only if no hwmon PWM node is present out of the box)
+git clone https://github.com/frankcrawford/it87.git
+cd it87
+make
+sudo make install
+sudo modprobe it87
+```
 
-5. Optional install `nvme-cli` for NVMe temperatures and `smartmontools` for drive temperatures:
-   ```bash
-   sudo apt install nvme-cli smartmontools
-   ```
+### Step 2 — Clone the repository to the service directory
 
----
+The systemd unit in step 4 expects the script at `/opt/odroid-fan/fan_control.py`, so
+clone there:
 
-## Systemd Service Example
+```bash
+sudo mkdir -p /opt/odroid-fan
+sudo git clone https://github.com/reserve85/odroid-h4-fan-control.git /opt/odroid-fan
+sudo chmod +x /opt/odroid-fan/fan_control.py
+```
 
-Create `/etc/systemd/system/fancontrol.service` with the following content. Adjust the install path (`/opt/odroid-fan/`) to where you cloned the repo:
+> Prefer a different location (e.g. your home directory)? Clone anywhere you like and
+> adjust `WorkingDirectory=` and `ExecStart=` in the systemd unit from step 4 to match.
+
+### Step 3 — Verify the script manually (before installing the service)
+
+```bash
+# 1. Show all options (works without root)
+python3 /opt/odroid-fan/fan_control.py --help
+
+# 2. Short test run (Ctrl+C stops it)
+sudo python3 /opt/odroid-fan/fan_control.py -v
+```
+
+A healthy run looks like this:
+
+```text
+Using PWM sysfs path: /sys/class/hwmon/hwmon2/pwm1
+Set /sys/class/hwmon/hwmon2/pwm1_enable = 1 (manual mode; was 2)
+fan_control.py started (sleep=2s, curve=lin, overheat=False, ...)
+CPU: 44°C  Drive: N/A  NVMe: 38°C  PWM: 74
+```
+
+What to check:
+
+| Line | Meaning |
+|---|---|
+| `Using PWM sysfs path: ...` | A fan controller node was found. |
+| `Set ..._enable = 1 (manual mode; ...)` | The script switched the channel to manual control. |
+| `No PWM sysfs path found` | No PWM node detected — see [Troubleshooting](#troubleshooting). |
+| `CPU: ... PWM: ...` | A status line; PWM should rise when the CPU heats up. |
+
+If everything looks right, press `Ctrl+C` and continue.
+
+### Step 4 — Install the systemd service
+
+Create `/etc/systemd/system/fancontrol.service`:
 
 ```ini
 [Unit]
@@ -96,105 +141,204 @@ SyslogIdentifier=fancontrol
 WantedBy=multi-user.target
 ```
 
-Enable and start the service:
+> If you cloned the repository somewhere other than `/opt/odroid-fan`, update
+> `WorkingDirectory=` and `ExecStart=` accordingly.
+
+Then enable and start it:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable fancontrol.service
 sudo systemctl start fancontrol.service
+```
+
+### Step 5 — Verify the service
+
+```bash
+# status should be "active (running)"
+systemctl status fancontrol.service
+
+# follow the logs
 sudo journalctl -u fancontrol.service -f -o short-iso-precise
+
+# watch the PWM value respond to load (in another shell)
+watch -n1 'cat /sys/class/hwmon/hwmon*/pwm1'
+```
+
+To force the fan up, put some load on the board, e.g.:
+
+```bash
+sudo apt install stress-ng
+stress-ng --cpu 4 --timeout 60
+```
+
+The `pwm1` value should climb while the load runs and fall back afterwards.
+
+### Updating
+
+```bash
+sudo systemctl stop fancontrol.service
+sudo git -C /opt/odroid-fan pull
+sudo systemctl start fancontrol.service
+```
+
+(Run `sudo systemctl daemon-reload` first if the unit file changed.)
+
+### Uninstalling
+
+```bash
+sudo systemctl disable --now fancontrol.service
+sudo rm /etc/systemd/system/fancontrol.service
+sudo systemctl daemon-reload
+sudo rm -rf /opt/odroid-fan
 ```
 
 ---
 
 ## Command Line Options
 
-- `-v`, `--verbose` : Enable verbose logging.  
-- `-t`, `--sleep <seconds>` : Sleep interval between checks (default **2**).  
-- `-o`, `--overheat` : Enable overheat protection (shutdown when threshold reached).  
-- `--overheat-threshold <°C>` : Overheat shutdown threshold (default **95**). The shutdown triggers **exactly** at this temperature.  
-- `--pwm-hysteresis <value>` : Rewrite the PWM value only when it changes by more than this (default **2**).  
-- `-c`, `--curve <lin|log|exp>` : PWM curve type (default `lin`).  
-- `--pwm-min <value>` : Minimum PWM value (example `30`).  
-- `--pwm-max <value>` : Maximum PWM value (example `128`).  
-- `--tmin <°C>` / `--tmax <°C>` : Temperature range for the curve (default `30`/`80`).
+| Option | Description |
+|---|---|
+| `-v`, `--verbose` | Enable verbose (DEBUG) logging. |
+| `-t`, `--sleep <seconds>` | Sleep interval between checks (default **2**, must be > 0). |
+| `-o`, `--overheat` | Enable overheat protection (shutdown when threshold reached). |
+| `--overheat-threshold <°C>` | Shutdown threshold (default **95**). Triggers **exactly** at this temperature; must be ≥ 0. |
+| `--pwm-hysteresis <value>` | Only rewrite PWM when it changes by more than this (default **2**, must be ≥ 0). |
+| `-c`, `--curve <lin\|log\|exp>` | Fan curve type (default `lin`). |
+| `--pwm-min <value>` | Minimum PWM value (default `20`, range `0..255`). |
+| `--pwm-max <value>` | Maximum PWM value (default `255`, range `0..255`). |
+| `--tmin <°C>` / `--tmax <°C>` | Temperature range for the curve (default `30`/`80`, `tmin` must be < `tmax`). |
 
-Invalid values (e.g. `--tmin >= --tmax`, `--sleep <= 0`, PWM outside `0..255`) are rejected with a clean error and exit code `2`.
+Invalid values (e.g. `--tmin >= --tmax`, `--sleep <= 0`, PWM outside `0..255`,
+negative hysteresis or threshold) are rejected with a clean error and **exit code 2**.
 
 ---
 
 ## Examples
 
-Run manually with your requested settings:
+Manual run with custom settings:
 
 ```bash
 sudo /usr/bin/python3 /opt/odroid-fan/fan_control.py -v -o -c lin --tmin 40 --tmax 80 --pwm-min 30 --pwm-max 128 --overheat-threshold 95
 ```
 
-Start the systemd service:
+Service management and logs:
 
 ```bash
 sudo systemctl start fancontrol.service
-```
-
-View logs:
-
-```bash
+sudo systemctl stop fancontrol.service
 sudo journalctl -u fancontrol.service -f -o short-iso-precise
 ```
 
----
-
 ## Behavior Notes
 
-- The script prefers **coretemp**/hwmon CPU sensors (Package/Core) over ACPI thermal zones to avoid using chassis/ACPI temperatures, and uses the **hottest** matching core.  
-- When multiple sensors are available the script uses the highest relevant temperature to compute PWM. If *all* sensors are unavailable it fails safe to **maximum** PWM.  
-- The script writes PWM values to the detected `pwm` sysfs node. If your board exposes different sysfs paths (for example Hardkernel EC), update the script accordingly.  
-- Default sleep interval is **2 seconds**. Status lines are rate-limited (min. 1 s) and forced on state changes (PWM change or overheat), so log volume stays bounded even with a short interval.  
-- Drive temperature via `smartctl` is **best-effort**: if `smartctl` or a drive is missing, that sensor is simply reported as `N/A`.
+- **Temperature sources** (in order): coretemp/hwmon labels `package`/`core` → thermal
+  zones (hottest wins) → `sensors` output. NVMe uses `nvme smart-log` with an hwmon
+  fallback; drives use `smartctl -A` (best-effort, reported as `N/A` if unavailable).
+- **Aggregation:** the hottest reading across CPU/Drive/NVMe drives the curve. If *all*
+  sensors are unavailable the script fails safe to **maximum** PWM.
+- **PWM write only on change:** the value is rewritten only when the delta exceeds
+  `--pwm-hysteresis`; failed writes are retried on the next cycle (the cache only
+  advances on success).
+- **Manual mode:** at startup the script writes `1` to `<pwm-path>_enable` if that file
+  exists and isn't already `1`, logging the change — automatic/thermal firmware control
+  would otherwise silently ignore PWM writes.
+- **Logging cadence:** a status line on every PWM/fail-safe state change, plus a
+  heartbeat every **30 s** while nothing changes; entering fail-safe logs a single
+  `ERROR`. With the default 2 s interval, journal volume stays bounded.
+- **Sensor probing:** missing binaries/devices and hung probes are cached for **60 s**
+  (per device), then re-probed — so a drive added after startup is picked up, and a
+  hanging `smartctl`/`nvme` call can't stall every loop.
+- **Overheat shutdown** only happens with `-o` set. The first attempt logs `CRITICAL`;
+  if the `shutdown` command fails, the loop keeps the fan at max and retries, logging at
+  most one `ERROR` per 30 s.
+- **Loop robustness:** `sleep` is the last call of every iteration; unhandled
+  exceptions are logged and backed off (`max(sleep, 5)` seconds); `Ctrl+C` exits
+  cleanly.
 
 ---
 
 ## Development / Testing
 
-The project ships with a full `pytest` suite under `tests/`. **All hardware I/O (sysfs, `subprocess`, sysfs writes) is mocked** — no test touches real hardware.
+The full `pytest` suite lives under `tests/` — **all hardware I/O (sysfs, subprocess)
+is mocked**, so it runs anywhere (Linux, Windows, CI).
 
 ```bash
-# install dev deps (pytest)
-pip install pytest
+# install the package in editable mode with dev tools (pytest + ruff)
+python3 -m pip install -e ".[dev]"
 
-# run the suite (terminates quickly; no live sensor loop runs during collection)
-python -m pytest tests/
-```
+# run the suite (103 tests, ~0.2 s; a 30 s faulthandler guard fails hangs fast)
+python3 -m pytest
 
-A dedicated regression test (`tests/test_import_safety.py`) asserts that importing `fan_control` performs **no** argparse/sysfs work — the historical cause of endless pytest runs.
-
-Optional lint:
-
-```bash
+# lint
 ruff check fan_control.py tests/
 ```
 
----
+Notable test guarantees:
 
-## Customization
+- `tests/test_import_safety.py` — importing `fan_control` performs **no**
+  argparse/sysfs work (the historical cause of endless pytest runs).
+- `tests/test_logging.py` — log cadence: forced on state change, 30 s heartbeat,
+  exactly one fail-safe `ERROR`.
+- `tests/test_pwm_enable.py` — manual-mode setup and PWM path re-resolution.
 
-- To use separate temperature ranges per sensor (CPU, Drive, NVMe) or a different aggregation strategy, the script can be extended with per-sensor CLI flags and a custom `compute_pwm` strategy.
-
----
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on every push and pull request
+against Python 3.8, 3.11, and 3.13.
 
 ## Troubleshooting
 
-- If the script logs `No PWM sysfs path found`, run:
-  ```bash
-  for h in /sys/class/hwmon/hwmon*; do echo -n "$h: "; cat $h/name 2>/dev/null || echo "(no name)"; ls $h | grep -E '^pwm|^fan' 2>/dev/null || true; done
-  ```
-  and update the script to point to the correct `pwm` node if necessary.  
-- If CPU temperature reads low (e.g., ACPI instead of coretemp), ensure `coretemp` is available and the script is preferring the `coretemp` hwmon entry.
-- If drive temperatures always show `N/A`, install `smartmontools` (`sudo apt install smartmontools`) and ensure `smartctl` is on `PATH`.
+**`No PWM sysfs path found` in the log** — no fan controller node was detected.
+List what the system exposes:
+
+```bash
+for h in /sys/class/hwmon/hwmon*; do echo -n "$h: "; cat $h/name 2>/dev/null || echo "(no name)"; ls $h | grep -E '^pwm|^fan' 2>/dev/null || true; done
+```
+
+- No `pwm*` entries at all → install/load the `it87` module (step 1), or check that
+  the BIOS fan is set to **software mode**.
+- Entries exist but the wrong chip is picked → adjust the `preferred_names` tuple in
+  `find_pwm_path()` (`fan_control.py`).
+
+**PWM path found, writes succeed, but the fan speed never changes** — the channel is
+likely still under automatic/thermal control. The script forces manual mode at startup:
+
+```text
+Set /sys/class/hwmon/hwmon2/pwm1_enable = 1 (manual mode; was 2)
+```
+
+If you instead see `Could not set ... to manual mode`, set it manually to see why:
+
+```bash
+echo 1 | sudo tee /sys/class/hwmon/hwmon*/pwm1_enable
+```
+
+Also verify the BIOS fan setting is **software mode**.
+
+**CPU temperature looks too low / like chassis air** — you are probably on an ACPI
+thermal zone instead of `coretemp`. Ensure the `coretemp` driver is loaded
+(`cat /sys/class/hwmon/hwmon*/name`) — the script prefers it automatically.
+
+**Drive temperatures always show `N/A`** — install `smartmontools`
+(`sudo apt install smartmontools`) and make sure `smartctl` is on `PATH` and the script
+runs as root (the service does).
+
+**NVMe temperatures always show `N/A`** — install `nvme-cli` (`sudo apt install nvme-cli`).
+Remember missing sources are re-probed after at most **60 s**, not immediately.
+
+**Log says `fail-safe: no readings`** — *every* sensor source is unavailable. The fan is
+held at maximum PWM as a precaution. Check the individual sources (previous points) and
+run with `-v` for detail.
+
+**Overheat shutdown never happens** — the feature is opt-in: pass `-o`
+(`--overheat`). Without it the threshold is ignored by design.
+
+**`Overheat shutdown attempt ... failed`** — the `shutdown` command was not available
+or returned an error. The script keeps running with the fan at max and retries; fix the
+underlying issue (e.g. systemd/shutdown not present).
 
 ---
 
 ## Credits
 
-Based on the ODROID wiki article *Fan Speed Control with Temperature* and the original shell script. Ported to Python and adapted locally. YMMV.
+Based on the ODROID wiki article *Fan Speed Control with Temperature* and the original
+shell script. Ported to Python and adapted locally. YMMV.

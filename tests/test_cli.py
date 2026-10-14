@@ -96,3 +96,17 @@ def test_pwm_range_validation_exit_2(capsys):
         fan_control.parse_cli(["--pwm-min", "0", "--pwm-max", "300"])
     assert exc.value.code == 2
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_negative_hysteresis_rejected(capsys):
+    with pytest.raises(SystemExit) as exc:
+        fan_control.parse_cli(["--pwm-hysteresis", "-1"])
+    assert exc.value.code == 2
+    assert "hysteresis" in capsys.readouterr().err
+
+
+def test_negative_overheat_threshold_rejected(capsys):
+    with pytest.raises(SystemExit) as exc:
+        fan_control.parse_cli(["--overheat-threshold", "-5"])
+    assert exc.value.code == 2
+    assert "overheat-threshold" in capsys.readouterr().err

@@ -74,13 +74,12 @@ def test_write_pwm_permission_error_returns_false(make_config, tmp_path, monkeyp
     pwm = tmp_path / "pwm1"
     pwm.write_text("0")
 
+    import builtins
+
     def deny(*args, **kwargs):
         raise PermissionError("EACCES")
 
-    monkeypatch.setattr(fan_control, "open", deny, raising=False)
-    # open is a builtin; patch builtins.open instead
-    import builtins
-
+    # open is a builtin; patch it in builtins (module-level lookup finds it there)
     monkeypatch.setattr(builtins, "open", deny)
     assert fan_control.write_pwm(50, cfg, str(pwm)) is False
 

@@ -5,8 +5,13 @@ plus the infinite main() loop firing during collection. This test guards the
 fix: importing the module must not parse argv, open sysfs, or start a loop.
 """
 
+import os
 import subprocess
 import sys
+
+# Repo root, so the fresh-interpreter subprocess import works regardless of
+# the directory pytest was invoked from (L1).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_import_has_no_side_effects():
@@ -18,7 +23,8 @@ def test_import_has_no_side_effects():
         text=True,
         timeout=30,
         check=False,
-        cwd=None,
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": REPO_ROOT},
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "", f"import produced output: {result.stdout!r}"
@@ -43,12 +49,14 @@ def test_module_exposes_expected_api():
         "compute_pwm_log",
         "compute_pwm_exp",
         "compute_pwm",
+        "compute_pwm_from_temp",
         "read_cpu_temp",
         "read_nvme_temp",
         "read_drive_temp",
         "find_pwm_path",
         "get_pwm_path",
         "write_pwm",
+        "ensure_manual_pwm_mode",
         "main",
     ):
         assert hasattr(fan_control, name), f"missing {name}"

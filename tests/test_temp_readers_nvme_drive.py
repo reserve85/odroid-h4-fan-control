@@ -33,9 +33,12 @@ def test_read_nvme_all_missing_returns_none(monkeypatch):
 
 
 def test_read_nvme_negative_result_cached(monkeypatch):
+    import time as time_mod
+
     monkeypatch.setattr(fan_control.glob, "glob", lambda pattern: [])
     assert fan_control.read_nvme_temp() is None
-    assert fan_control._missing_path_cache.get("nvme_devices") is True
+    assert "nvme_devices" in fan_control._missing_path_cache
+    assert fan_control._missing_path_cache["nvme_devices"] > time_mod.monotonic()
     # a second call still short-circuits the /dev/nvme probe
     assert fan_control.read_nvme_temp() is None
 
@@ -73,10 +76,89 @@ def test_read_drive_smartctl_missing_returns_none(monkeypatch):
 
     monkeypatch.setattr(fan_control.subprocess, "check_output", fail)
     assert fan_control.read_drive_temp() is None
-    assert fan_control._missing_path_cache.get("smartctl") is True
+    assert "smartctl" in fan_control._missing_path_cache
 
 
 def test_read_drive_no_devices_returns_none(monkeypatch):
+    import time as time_mod
+
     monkeypatch.setattr(fan_control.glob, "glob", lambda pattern: [])
     assert fan_control.read_drive_temp() is None
-    assert fan_control._missing_path_cache.get("sd_devices") is True
+    assert "sd_devices" in fan_control._missing_path_cache
+    assert fan_control._missing_path_cache["sd_devices"] > time_mod.monotonic()
+
+
+def test_missing_cache_expires_and_reprobes(monkeypatch):
+    # M2: an expired entry must be re-probed, not cached for the lifetime
+    # of the process (e.g. a drive that appears after startup).
+    import time as time_mod
+
+    fan_control._missing_path_cache["sd_devices"] = time_mod.monotonic() - 1
+    probed = {"n": 0}
+
+    def counting_glob(pattern):
+        probed["n"] += 1
+        return []
+
+    monkeypatch.setattr(fan_control.glob, "glob", counting_glob)
+    assert fan_control.read_drive_temp() is None
+    assert probed["n"] >= 1  # expired entry -> /dev probed again
+    # and re-marked with a fresh expiry
+    assert fan_control._missing_path_cache["sd_devices"] > time_mod.monotonic()
+
+
+def test_read_drive_timeout_cached_per_device(monkeypatch):
+    # M3: a hung SATA device must not cost SUBPROCESS_TIMEOUT every loop.
+    import subprocess as sp
+
+    def fake_glob(pattern):
+        if pattern == "/dev/sd[a-z]":
+            return ["/dev/sda"]
+        return []
+
+    monkeypatch.setattr(fan_control.glob, "glob", fake_glob)
+
+    def hang(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, fan_control.SUBPROCESS_TIMEOUT)
+
+    monkeypatch.setattr(fan_control.subprocess, "check_output", hang)
+    assert fan_control.read_drive_temp() is None
+    assert "sd:/dev/sda" in fan_control._missing_path_cache
+
+    calls = {"n": 0}
+
+    def counting(cmd, **kwargs):
+        calls["n"] += 1
+        raise sp.TimeoutExpired(cmd, fan_control.SUBPROCESS_TIMEOUT)
+
+    monkeypatch.setattr(fan_control.subprocess, "check_output", counting)
+    assert fan_control.read_drive_temp() is None
+    assert calls["n"] == 0  # per-device TTL cache prevents respawning
+
+
+def test_read_nvme_timeout_cached_per_device(monkeypatch):
+    import subprocess as sp
+
+    def fake_glob(pattern):
+        if pattern == "/dev/nvme*n1":
+            return ["/dev/nvme0n1"]
+        return []
+
+    monkeypatch.setattr(fan_control.glob, "glob", fake_glob)
+
+    def hang(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, fan_control.SUBPROCESS_TIMEOUT)
+
+    monkeypatch.setattr(fan_control.subprocess, "check_output", hang)
+    assert fan_control.read_nvme_temp() is None
+    assert "nvme:/dev/nvme0n1" in fan_control._missing_path_cache
+
+    calls = {"n": 0}
+
+    def counting(cmd, **kwargs):
+        calls["n"] += 1
+        raise sp.TimeoutExpired(cmd, fan_control.SUBPROCESS_TIMEOUT)
+
+    monkeypatch.setattr(fan_control.subprocess, "check_output", counting)
+    assert fan_control.read_nvme_temp() is None
+    assert calls["n"] == 0

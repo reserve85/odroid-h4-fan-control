@@ -12,7 +12,7 @@ def _make_deps(read_cpu=None, writer=None, shutdown=None, sleep=None, clock=None
         read_nvme=lambda: None,
         read_drive=lambda: None,
         write_pwm_fn=writer or (lambda v, c, p: True),
-        shutdown_fn=shutdown or (lambda: None),
+        shutdown_fn=shutdown or (lambda: True),
         sleep_fn=sleep or (lambda s: None),
         clock=clock or (lambda: 100.0),
         pwm_path="/fake/pwm1",
@@ -79,13 +79,33 @@ def test_shutdown_never_invoked_without_flag(make_config):
 def test_shutdown_invoked_once_with_flag(make_config):
     cfg = make_config(overheat=True, overheat_threshold=95)
     shutdown_calls = {"n": 0}
-    deps = _make_deps(
-        read_cpu=lambda: 96,
-        shutdown=lambda: shutdown_calls.__setitem__("n", shutdown_calls["n"] + 1),
-    )
+
+    def do_shutdown():
+        shutdown_calls["n"] += 1
+        return True
+
+    deps = _make_deps(read_cpu=lambda: 96, shutdown=do_shutdown)
     fan_control.main(cfg, max_iterations=10, deps=deps)
     # loop must break after shutdown; only one invocation (#2 no double shutdown)
     assert shutdown_calls["n"] == 1
+
+
+def test_shutdown_failure_retries_and_loop_keeps_running(make_config, caplog):
+    # H2: a failed shutdown must NOT stop the daemon — it retries every
+    # cycle while the fan stays under control at pwm_max.
+    cfg = make_config(overheat=True, overheat_threshold=95)
+    shutdown_calls = {"n": 0}
+
+    def fail_shutdown():
+        shutdown_calls["n"] += 1
+        return False
+
+    deps = _make_deps(read_cpu=lambda: 96, shutdown=fail_shutdown)
+    with caplog.at_level("INFO"):
+        fan_control.main(cfg, max_iterations=3, deps=deps)
+    assert shutdown_calls["n"] == 3  # loop did not exit early
+    criticals = [r for r in caplog.records if r.levelname == "CRITICAL"]
+    assert len(criticals) == 1  # critical logged once, not per attempt
 
 
 def test_successful_write_advances_cache_and_skips_repeat(make_config):

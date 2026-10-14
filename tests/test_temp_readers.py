@@ -88,6 +88,38 @@ def test_read_cpu_thermal_zone_fallback(monkeypatch, tmp_path):
     assert fan_control.read_cpu_temp() == 47
 
 
+def test_read_cpu_thermal_zone_takes_hottest(monkeypatch, tmp_path):
+    # L3: fallback must use the hottest zone, not whichever sorts first.
+    z0 = tmp_path / "thermal_zone0"
+    z0.mkdir()
+    (z0 / "temp").write_text("40000\n")
+    z1 = tmp_path / "thermal_zone1"
+    z1.mkdir()
+    (z1 / "temp").write_text("47000\n")
+
+    def fake_glob(pattern):
+        if pattern.startswith("/sys/class/hwmon"):
+            return []
+        if pattern.startswith("/sys/class/thermal"):
+            return [str(z0 / "temp"), str(z1 / "temp")]
+        return []
+
+    monkeypatch.setattr(fan_control.glob, "glob", fake_glob)
+    assert fan_control.read_cpu_temp() == 47
+
+
+def test_read_cpu_unlabeled_fallback_takes_hottest(monkeypatch, tmp_path):
+    # L3: hwmon entry matches by name but has no label files — the unlabeled
+    # fallback must pick the hottest input, not the first one.
+    hw = tmp_path / "hwmon0"
+    hw.mkdir()
+    (hw / "name").write_text("coretemp\n")
+    (hw / "temp1_input").write_text("40000\n")
+    (hw / "temp2_input").write_text("57000\n")
+    monkeypatch.setattr(fan_control.glob, "glob", _hwmon_glob(hw, [1, 2]))
+    assert fan_control.read_cpu_temp() == 57
+
+
 def test_read_cpu_sensors_parsing(monkeypatch):
     monkeypatch.setattr(fan_control.glob, "glob", lambda pattern: [])
     output = (

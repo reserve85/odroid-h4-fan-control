@@ -42,29 +42,6 @@ def make_config():
     return _make
 
 
-@pytest.fixture
-def fake_hwmon_tree(tmp_path):
-    """tmp_path sysfs-style tree with name/temp1_input/temp1_label/pwm1."""
-    hw = tmp_path / "hwmon0"
-    hw.mkdir()
-    (hw / "name").write_text("coretemp\n")
-    (hw / "temp1_input").write_text("45000\n")
-    (hw / "temp1_label").write_text("Package id 0\n")
-    (hw / "pwm1").write_text("128\n")
-    return hw
-
-
-@pytest.fixture
-def no_sysfs(monkeypatch):
-    """Make glob.glob return nothing so readers see no sensors."""
-
-    def _empty_glob(pattern):
-        return []
-
-    monkeypatch.setattr(fan_control, "glob", type("G", (), {"glob": staticmethod(_empty_glob)})())
-    return _empty_glob
-
-
 @pytest.fixture(scope="session", autouse=True)
 def _import_has_no_side_effects():
     """Session safety: importing fan_control must not parse args or open sysfs.

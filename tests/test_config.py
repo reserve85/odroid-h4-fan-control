@@ -53,3 +53,19 @@ def test_pwm_max_above_255_raises(make_config):
 def test_pwm_boundaries_ok(make_config):
     make_config(pwm_min=0, pwm_max=255).validate()
     make_config(pwm_min=0, pwm_max=0).validate()
+
+
+def test_negative_pwm_hysteresis_raises(make_config):
+    cfg = make_config(pwm_hysteresis=-1)
+    with pytest.raises(ValueError, match="hysteresis"):
+        cfg.validate()
+
+
+def test_negative_overheat_threshold_raises(make_config):
+    cfg = make_config(overheat_threshold=-1)
+    with pytest.raises(ValueError, match="overheat-threshold"):
+        cfg.validate()
+
+
+def test_zero_hysteresis_and_threshold_ok(make_config):
+    make_config(pwm_hysteresis=0, overheat_threshold=0).validate()
