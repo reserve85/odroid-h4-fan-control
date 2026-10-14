@@ -59,16 +59,18 @@ module:
 sudo apt update
 sudo apt install nvme-cli smartmontools
 
-# it87 kernel module (only if no hwmon PWM node is present out of the box)
+# it87 kernel module (only if no hwmon PWM node is present out of the box).
+# DKMS install is preferred: the module is rebuilt automatically on every
+# kernel update, so fan control survives reboots and upgrades.
+sudo apt install dkms build-essential git linux-headers-$(uname -r)
 git clone https://github.com/frankcrawford/it87.git
 cd it87
-make
-sudo make install
+sudo ./dkms-install.sh
 sudo modprobe it87
 
-# Persist across reboots: the modprobe above only lasts until the next reboot, and
-# after a kernel update the module must be rebuilt (git pull && make && sudo make
-# install) for the new kernel before it can be loaded again.
+# Auto-load at boot (modprobe alone only lasts until the next reboot).
+# Without DKMS use `make && sudo make install` instead — but then re-run it
+# after every kernel update before modprobe will work again.
 echo it87 | sudo tee /etc/modules-load.d/it87.conf
 ```
 
@@ -301,9 +303,13 @@ for h in /sys/class/hwmon/hwmon*; do echo -n "$h: "; cat $h/name 2>/dev/null || 
 
 - No `pwm*` entries at all → install/load the `it87` module (step 1), or check that
   the BIOS fan is set to **software mode**.
-- Worked before, but no `pwm*` after a reboot or kernel update → `modprobe it87` is not
-  persistent unless `/etc/modules-load.d/it87.conf` exists (step 1), and the out-of-tree
-  module must be rebuilt after every kernel update. Load the module **before** restarting
+- Worked before, but no `pwm*` after a reboot or kernel update → `modprobe it87` only
+  lasts until reboot unless `/etc/modules-load.d/it87.conf` exists, and a plain
+  `make install` module must be rebuilt for each new kernel (the DKMS install in
+  step 1 handles both automatically). If `modprobe it87` fails with `No such device`,
+  the in-tree driver could not claim the chip — install the DKMS module from step 1,
+  or force detection with `sudo modprobe it87 force_id=0x<ID>` using the chip ID
+  reported by `sudo sensors-detect`. Always load the module **before** restarting
   the service — the PWM path is resolved once at startup.
 - Entries exist but the wrong chip is picked → adjust the `preferred_names` tuple in
   `find_pwm_path()` (`fan_control.py`).
