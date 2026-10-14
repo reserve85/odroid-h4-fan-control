@@ -65,6 +65,11 @@ cd it87
 make
 sudo make install
 sudo modprobe it87
+
+# Persist across reboots: the modprobe above only lasts until the next reboot, and
+# after a kernel update the module must be rebuilt (git pull && make && sudo make
+# install) for the new kernel before it can be loaded again.
+echo it87 | sudo tee /etc/modules-load.d/it87.conf
 ```
 
 ### Step 2 — Clone the repository to the service directory
@@ -296,6 +301,10 @@ for h in /sys/class/hwmon/hwmon*; do echo -n "$h: "; cat $h/name 2>/dev/null || 
 
 - No `pwm*` entries at all → install/load the `it87` module (step 1), or check that
   the BIOS fan is set to **software mode**.
+- Worked before, but no `pwm*` after a reboot or kernel update → `modprobe it87` is not
+  persistent unless `/etc/modules-load.d/it87.conf` exists (step 1), and the out-of-tree
+  module must be rebuilt after every kernel update. Load the module **before** restarting
+  the service — the PWM path is resolved once at startup.
 - Entries exist but the wrong chip is picked → adjust the `preferred_names` tuple in
   `find_pwm_path()` (`fan_control.py`).
 
