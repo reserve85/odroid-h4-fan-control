@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 fan_control.py - ODROID H4 Fan Control
 Features:
@@ -23,7 +22,6 @@ import math
 import os
 import re
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Literal, Optional, Sequence, Tuple
@@ -51,7 +49,7 @@ class FanConfig:
     pwm_hysteresis: int = 2
     verbose: bool = False
 
-    def validate(self) -> "FanConfig":
+    def validate(self) -> FanConfig:
         if self.tmin >= self.tmax:
             raise ValueError(f"--tmin ({self.tmin}) must be < --tmax ({self.tmax})")
         if self.pwm_min > self.pwm_max:
@@ -75,7 +73,7 @@ class SensorSnapshot:
     @classmethod
     def from_readings(
         cls, cpu: TempReading, drive: TempReading, nvme: TempReading
-    ) -> "SensorSnapshot":
+    ) -> SensorSnapshot:
         return cls(cpu=cpu, drive=drive, nvme=nvme)
 
     @property
@@ -208,6 +206,83 @@ def _probe_missing(key: str) -> bool:
 
 def _mark_missing(key: str) -> None:
     _missing_path_cache[key] = True
+
+
+def read_cpu_temp() -> TempReading:
+    """
+    Prefer coretemp / hwmon CPU sensors (Package/Core). Fallbacks: thermal_zone,
+    sensors output. Returns int °C or None.
+    """
+    # 1) prefer hwmon entries with name 'coretemp' or labels 'package'/'core'
+    best: Optional[int] = None
+    for hw in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name = ""
+        try:
+            with open(os.path.join(hw, "name")) as f:
+                name = f.read().strip().lower()
+        except OSError:
+            name = ""
+        if "coretemp" in name or "core" in name or "package" in name:
+            # Hottest across all matching labeled inputs (#13).
+            labeled_values = []
+            for tfile in sorted(glob.glob(os.path.join(hw, "temp*_input"))):
+                label = ""
+                label_file = tfile.replace("_input", "_label")
+                try:
+                    with open(label_file) as lf:
+                        label = lf.read().strip().lower()
+                except OSError:
+                    label = ""
+                if label and ("package" in label or "core" in label):
+                    v = _read_int(tfile)
+                    if v is None:
+                        continue
+                    labeled_values.append(scale_temp(v, millidegrees=True))
+            if labeled_values:
+                candidate = max(labeled_values)
+                if best is None or candidate > best:
+                    best = candidate
+                continue
+            # no labeled temps: fall back to first temp*_input found
+            for tfile in sorted(glob.glob(os.path.join(hw, "temp*_input"))):
+                v = _read_int(tfile)
+                if v is None:
+                    continue
+                candidate = scale_temp(v, millidegrees=True)
+                if best is None or candidate > best:
+                    best = candidate
+                break
+
+    if best is not None:
+        return best
+
+    # 2) fallback: thermal_zone (acpitz etc.)
+    for p in sorted(glob.glob("/sys/class/thermal/thermal_zone*/temp")):
+        v = _read_int(p)
+        if v is None:
+            continue
+        return scale_temp(v, millidegrees=True)
+
+    # 3) sensors command as last resort (whole degrees, not millidegrees)
+    if not _probe_missing("sensors"):
+        try:
+            out = subprocess.check_output(
+                ["sensors"], stderr=subprocess.DEVNULL, text=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            for line in out.splitlines():
+                if "package id" in line.lower() or re.search(r"core\s+\d+", line.lower()):
+                    m = re.search(r"(-?\d+(\.\d+)?)\s*°C", line)
+                    if m:
+                        return scale_temp(round(float(m.group(1))), millidegrees=False)
+            for line in out.splitlines():
+                m = re.search(r"(-?\d+(\.\d+)?)\s*°C", line)
+                if m:
+                    return scale_temp(round(float(m.group(1))), millidegrees=False)
+        except (OSError, subprocess.SubprocessError):
+            _mark_missing("sensors")
+
+    logger.debug("read_cpu_temp: no CPU temperature source found")
+    return None
 
 
 def read_nvme_temp() -> TempReading:
@@ -438,7 +513,7 @@ class LoopDeps:
     pwm_path: Optional[str]
 
     @classmethod
-    def real(cls) -> "LoopDeps":
+    def real(cls) -> LoopDeps:
         return cls(
             read_cpu=read_cpu_temp,
             read_nvme=read_nvme_temp,
@@ -540,8 +615,8 @@ def run_loop_iteration(deps: LoopDeps, state: LoopState, config: FanConfig) -> L
         return state
     except KeyboardInterrupt:
         raise
-    except Exception as exc:
-        logger.exception("Unhandled exception in main loop: %s", exc)
+    except Exception:
+        logger.exception("Unhandled exception in main loop")
         deps.sleep_fn(max(config.sleep, 5))  # configured backoff
         return state
 

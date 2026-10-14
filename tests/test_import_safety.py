@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Import-safety regression: fan_control must import with zero side effects.
 
 The historical endless-pytest-loop bug was caused by import-time parse_args()
@@ -18,6 +17,7 @@ def test_import_has_no_side_effects():
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
         cwd=None,
     )
     assert result.returncode == 0, result.stderr

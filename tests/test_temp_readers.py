@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Temperature readers: millidegree parsing, label preference, hottest core,
 thermal_zone fallback, sensors parsing, NVMe smart-log, drive smartctl."""
 

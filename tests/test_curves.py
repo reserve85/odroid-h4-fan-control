@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """PWM curve math: boundaries, monotonicity, div-by-zero guard, clamping."""
 
 import math

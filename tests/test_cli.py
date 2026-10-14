@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """CLI parser: defaults, choices, new flags, clean validation errors."""
 
 import pytest

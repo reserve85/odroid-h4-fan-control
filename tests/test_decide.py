@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Pure decide(): fail-safe, overheat threshold, hysteresis, mixed None."""
 
 import fan_control

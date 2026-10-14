@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 """find_pwm_path preference/fallback and write_pwm behavior."""
-
-import os
 
 import fan_control
 

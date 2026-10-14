@@ -1,9 +1,6 @@
-# -*- coding: utf-8 -*-
 """FanConfig.validate() unit tests."""
 
 import pytest
-
-import fan_control
 
 
 def test_valid_defaults(make_config):

@@ -23,3 +23,9 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py38"
+
+[tool.ruff.lint]
+# UP006/UP007/UP045 suggest PEP 604 (`X | None`) / builtin generics which
+# require py3.9+/3.10+ at runtime; the ODROID target is 3.8, so we keep the
+# typing-module forms. Everything else stays enabled.
+extend-ignore = ["UP006", "UP007", "UP045"]

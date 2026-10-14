@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Bounded main-loop runs: sleep-last, exception backoff, KeyboardInterrupt,
 shutdown only with flag. No test may leave a loop running."""
 

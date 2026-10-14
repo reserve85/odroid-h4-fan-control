@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared fixtures. All hardware I/O is faked; nothing touches real sysfs."""
 
 import os
@@ -9,7 +8,7 @@ import pytest
 # Ensure repo root is importable regardless of how pytest is invoked.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import fan_control  # noqa: E402  (path set above)
+import fan_control
 
 
 @pytest.fixture(autouse=True)
@@ -25,18 +24,18 @@ def make_config():
     """Factory for a valid FanConfig."""
 
     def _make(**overrides):
-        defaults = dict(
-            sleep=2,
-            overheat=False,
-            curve="lin",
-            pwm_min=20,
-            pwm_max=255,
-            tmin=30,
-            tmax=80,
-            overheat_threshold=95,
-            pwm_hysteresis=2,
-            verbose=False,
-        )
+        defaults = {
+            "sleep": 2,
+            "overheat": False,
+            "curve": "lin",
+            "pwm_min": 20,
+            "pwm_max": 255,
+            "tmin": 30,
+            "tmax": 80,
+            "overheat_threshold": 95,
+            "pwm_hysteresis": 2,
+            "verbose": False,
+        }
         defaults.update(overrides)
         return fan_control.FanConfig(**defaults)
 

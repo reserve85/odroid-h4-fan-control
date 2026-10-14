@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Temperature readers, part 2: NVMe fallback/caching, drive smartctl."""
 
 import fan_control
