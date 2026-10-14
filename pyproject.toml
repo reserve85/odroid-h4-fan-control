@@ -1,0 +1,23 @@
+[project]
+name = "odroid-h4-fan-control"
+version = "1.0.0"
+description = "ODROID H4 fan control script"
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-timeout>=2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p faulthandler"
+# Belt-and-braces against hangs: fail any single test after 30s instead of
+# blocking the suite (regression guard for the historical import-time loop).
+timeout = 30
+# No -p no:cacheprovider needed; .pytest_cache/ is gitignored.
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
