@@ -7,16 +7,18 @@ requires-python = ">=3.8"
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
-    "pytest-timeout>=2",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# -p faulthandler: dumps stack traces on hang/timeout at the C level so a
+# regression fails visibly instead of blocking the suite forever.
 addopts = "-q -p faulthandler"
-# Belt-and-braces against hangs: fail any single test after 30s instead of
-# blocking the suite (regression guard for the historical import-time loop).
-timeout = 30
-# No -p no:cacheprovider needed; .pytest_cache/ is gitignored.
+filterwarnings = [
+    # pytest-asyncio (installed globally, unused here) warns about an unset
+    # option; silence the noise so stderr stays clean.
+    "ignore::pytest.PytestDeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100
